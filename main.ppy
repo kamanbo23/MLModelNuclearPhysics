@@ -1,0 +1,77 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+from sklearn.preprocessing import StandardScaler
+from imblearn.over_sampling import SMOTE
+import shap
+
+# Simulate a larger dataset with realistic fusion parameters
+np.random.seed(42)
+num_samples = 10000
+
+data = {
+    'Plasma Current (Ip)': np.random.uniform(0.5, 3.5, num_samples),  # MA
+    'Electron Density (ne)': np.random.uniform(1e19, 1e21, num_samples),  # m^-3
+    'Magnetic Field (B)': np.random.uniform(1.0, 8.0, num_samples),  # Tesla
+    'Plasma Pressure (P)': np.random.uniform(1.0, 10.0, num_samples),  # Pa
+    'Radiated Power (Prad)': np.random.uniform(0.1, 2.0, num_samples),  # MW
+    'Edge Safety Factor (q95)': np.random.uniform(2.0, 8.0, num_samples),  # Dimensionless
+    'Energy Confinement Time (τE)': np.random.uniform(0.1, 5.0, num_samples),  # s
+    'Temperature Gradient (dT/dr)': np.random.uniform(10, 100, num_samples),  # K/m
+    'Turbulence Level (Turb)': np.random.uniform(0, 1, num_samples),  # Dimensionless
+    'Disruption (Target)': np.random.choice([0, 1], p=[0.85, 0.15], size=num_samples)  # Imbalanced
+}
+
+# Create DataFrame
+df = pd.DataFrame(data)
+
+# Features and target variable
+X = df.drop('Disruption (Target)', axis=1)  # Features
+y = df['Disruption (Target)']  # Target
+
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Scale features
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Handle class imbalance using SMOTE
+smote = SMOTE(random_state=42)
+X_train_res, y_train_res = smote.fit_resample(X_train_scaled, y_train)
+
+# Gradient Boosting Classifier with hyperparameter tuning
+param_grid = {
+    'n_estimators': [100, 200, 300],
+    'learning_rate': [0.01, 0.1, 0.2],
+    'max_depth': [3, 5, 7],
+    'subsample': [0.8, 1.0]
+}
+grid_search = GridSearchCV(GradientBoostingClassifier(random_state=42), param_grid, cv=3, scoring='roc_auc', verbose=2, n_jobs=-1)
+grid_search.fit(X_train_res, y_train_res)
+
+# Best model
+best_model = grid_search.best_estimator_
+
+# Predictions
+y_pred = best_model.predict(X_test_scaled)
+y_pred_proba = best_model.predict_proba(X_test_scaled)[:, 1]
+
+# Evaluation metrics
+conf_matrix = confusion_matrix(y_test, y_pred)
+report = classification_report(y_test, y_pred)
+roc_auc = roc_auc_score(y_test, y_pred_proba)
+
+print(f"Confusion Matrix:\n{conf_matrix}")
+print(f"Classification Report:\n{report}")
+print(f"ROC-AUC Score: {roc_auc:.2f}")
+
+# Explainability with SHAP
+explainer = shap.Explainer(best_model, X_test_scaled)
+shap_values = explainer(X_test_scaled)
+
+# Plot feature importance
+shap.summary_plot(shap_values, X_test)
